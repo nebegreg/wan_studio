@@ -3090,8 +3090,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.le_init_cache_dirname = QtWidgets.QLineEdit(str(getattr(init, 'project_cache_dirname', '.wan_cache') if init else '.wan_cache'))
         self.le_init_cache_dirname.setToolTip("Utilisé uniquement si cache_location=project")
 
-        self.init_w = QtWidgets.QSpinBox(); self.init_w.setRange(256, 4096); self.init_w.setValue(int(getattr(init, 'width', 1024) if init else 1024))
-        self.init_h = QtWidgets.QSpinBox(); self.init_h.setRange(256, 4096); self.init_h.setValue(int(getattr(init, 'height', 1024) if init else 1024))
+        base_w = int((getattr(init, 'width', 0) if init else 0) or getattr(self.cfg, 'width', 1024) or 1024)
+        base_h = int((getattr(init, 'height', 0) if init else 0) or getattr(self.cfg, 'height', 1024) or 1024)
+        self.init_w = QtWidgets.QSpinBox(); self.init_w.setRange(256, 4096); self.init_w.setValue(base_w)
+        self.init_h = QtWidgets.QSpinBox(); self.init_h.setRange(256, 4096); self.init_h.setValue(base_h)
         row_wh = QtWidgets.QHBoxLayout(); row_wh.addWidget(QtWidgets.QLabel('W')); row_wh.addWidget(self.init_w); row_wh.addWidget(QtWidgets.QLabel('H')); row_wh.addWidget(self.init_h)
         wrow_wh = QtWidgets.QWidget(); wrow_wh.setLayout(row_wh)
 
