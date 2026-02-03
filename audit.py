@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import py_compile, re, ast
+import py_compile, re, ast, shutil, os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -31,21 +31,34 @@ def compile_all():
             errs.append((str(p.relative_to(ROOT)), str(e)))
     return errs
 
-def connect_sanity(gui_py: Path):
-    txt = gui_py.read_text(encoding="utf-8")
+def _connect_sanity(path: Path):
+    txt = path.read_text(encoding="utf-8")
     tree = ast.parse(txt)
-    mw = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow"), None)
-    if not mw:
-        return ["MainWindow class not found"]
-
-    methods = {n.name for n in mw.body if isinstance(n, ast.FunctionDef)}
-    lines = txt.splitlines()
-    block = "\n".join(lines[mw.lineno - 1: mw.end_lineno])
-    refs = re.findall(r"\.connect\(\s*self\.([A-Za-z_]\w*)\s*\)", block)
-
+    missing = []
     ignore = {"close", "accept", "reject"}
-    missing = sorted({r for r in refs if r not in methods and r not in ignore})
+
+    for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+        methods = {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
+        lines = txt.splitlines()
+        block = "\n".join(lines[cls.lineno - 1: cls.end_lineno])
+        refs = re.findall(r"\.connect\(\s*self\.([A-Za-z_]\w*)\s*\)", block)
+        for r in sorted({r for r in refs if r not in methods and r not in ignore}):
+            missing.append(f"{cls.name}.{r}")
     return missing
+
+
+def check_dirs():
+    needed = [
+        ROOT / "outputs",
+        ROOT / "outputs" / "assets",
+        ROOT / "outputs" / "cache",
+    ]
+    missing = [p for p in needed if not p.exists()]
+    return missing
+
+
+def check_ffmpeg():
+    return shutil.which("ffmpeg")
 
 def main():
     errs = compile_all()
@@ -55,15 +68,36 @@ def main():
             print("  ", e)
         raise SystemExit(1)
 
-    gui = ROOT / "wan_studio" / "gui.py"
-    missing = connect_sanity(gui)
-    if missing:
-        print("❌ Missing MainWindow slot(s) referenced by connect():")
-        for m in missing:
+    missing_slots = []
+    for rel in ("wan_studio/gui.py", "wan_studio/studio_premiere.py", "wan_studio/settings_dialogs.py"):
+        path = ROOT / rel
+        if not path.exists():
+            continue
+        missing_slots.extend(_connect_sanity(path))
+
+    if missing_slots:
+        print("❌ Missing Qt slot(s) referenced by connect():")
+        for m in missing_slots:
             print("  ", m)
         raise SystemExit(2)
 
-    print("✅ Audit OK (compile + MainWindow Qt connects).")
+    missing_dirs = check_dirs()
+    if missing_dirs:
+        print("⚠️ Missing folders (creating):")
+        for p in missing_dirs:
+            print("  ", p)
+            try:
+                os.makedirs(p, exist_ok=True)
+            except Exception:
+                pass
+
+    ffmpeg = check_ffmpeg()
+    if ffmpeg:
+        print(f"✅ ffmpeg: {ffmpeg}")
+    else:
+        print("⚠️ ffmpeg: MISSING (fallbacks will be used)")
+
+    print("✅ Audit OK (compile + Qt connects).")
 
 if __name__ == "__main__":
     main()

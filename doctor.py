@@ -111,6 +111,13 @@ def main() -> int:
     except Exception as e:
         print("diffusers.Flux2*: ERROR", e)
 
+    # Z-Image / AutoPipeline
+    try:
+        from diffusers import AutoPipelineForText2Image
+        print("diffusers.AutoPipelineForText2Image: OK")
+    except Exception as e:
+        print("diffusers.AutoPipelineForText2Image: ERROR", e)
+
     # ffmpeg / ffprobe
     ffmpeg = _which("ffmpeg")
     ffprobe = _which("ffprobe")
