@@ -1706,7 +1706,13 @@ class WanEngine:
         is_cancelled: Optional[Callable[[], bool]],
     ) -> List[np.ndarray]:
         pipe = self.pipe
-        assert pipe is not None
+        if pipe is None:
+            # Recover from unexpected unloads before rendering a segment.
+            self._log(log, "[SAFE] Pipeline missing at segment start -> reloading.")
+            self._load_pipeline(cfg, log)
+            pipe = self.pipe
+        if pipe is None:
+            raise RuntimeError("Pipeline not initialized (backend load failed).")
 
         backend = (getattr(cfg, "backend", None) or getattr(self, "backend", None) or "wan")
         if backend == 'lingbot':
