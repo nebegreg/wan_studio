@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from PIL import Image
 
 from .config import ProjectConfig, SceneSpec
+from .init_frame_subprocess import resolve_hf_cache_dir, resolve_model_overrides, build_job, run_init_frame_job, clamp_to_multiple_of_8
 from .cinema_prompts import build_scene_prompts
 from .init_frame_cache import CacheItem, load_cache, save_cache
 from .resource_manager import get_resource_manager, cuda_cleanup
@@ -53,6 +54,38 @@ def _log(log, msg: str):
 
 def _safe_abspath(p: str) -> str:
     return os.path.abspath(os.path.expanduser(p))
+
+
+def _resolve_model_id_for_preset(init_cfg: Optional[object], preset: str) -> str:
+    overrides = resolve_model_overrides(init_cfg)
+    preset = str(preset or "").strip()
+    env_map = {
+        "flux2_bnb4bit": "WAN_INIT_FLUX2_BNB4BIT_MODEL",
+        "flux2": "WAN_INIT_FLUX2_MODEL",
+        "zimage_turbo": "WAN_INIT_ZIMAGE_TURBO_MODEL",
+        "zimage": "WAN_INIT_ZIMAGE_MODEL",
+        "sdxl_base": "WAN_INIT_SDXL_BASE_MODEL",
+        "sdxl_turbo": "WAN_INIT_SDXL_TURBO_MODEL",
+        "sdxl_lightning_4step": "WAN_INIT_SDXL_BASE_MODEL",
+        "flux1_schnell": "WAN_INIT_FLUX1_SCHNELL_MODEL",
+    }
+    override_map = {
+        "flux2_bnb4bit": "flux2_bnb4bit_model_id",
+        "flux2": "flux2_model_id",
+        "zimage_turbo": "zimage_turbo_model_id",
+        "zimage": "zimage_model_id",
+        "sdxl_base": "sdxl_base_model_id",
+        "sdxl_turbo": "sdxl_turbo_model_id",
+        "sdxl_lightning_4step": "sdxl_base_model_id",
+        "flux1_schnell": "flux1_schnell_model_id",
+    }
+    ov_key = override_map.get(preset)
+    if ov_key and overrides.get(ov_key):
+        return overrides[ov_key]
+    env_key = env_map.get(preset)
+    if env_key:
+        return os.environ.get(env_key, "").strip()
+    return ""
 
 
 def _project_root(cfg: ProjectConfig) -> str:
@@ -117,11 +150,11 @@ def _dedup_paths(paths: Sequence[str]) -> List[str]:
 def _effective_init_preset(scene: SceneSpec, cfg: ProjectConfig, preset_override: Optional[str] = None) -> str:
     init_cfg = getattr(cfg, "init_image", None)
     if preset_override:
-        return str(preset_override).strip() or "flux2_bnb4bit"
+        return str(preset_override).strip() or "zimage_turbo"
     sc = (getattr(scene, "init_preset_override", None) or "").strip()
     if sc:
         return sc
-    return str(getattr(init_cfg, "preset", "flux2_bnb4bit") or "flux2_bnb4bit").strip()
+    return str(getattr(init_cfg, "preset", "zimage_turbo") or "zimage_turbo").strip()
 
 
 def _effective_init_policy(scene: SceneSpec, cfg: ProjectConfig, policy_override: Optional[str] = None) -> str:
@@ -248,6 +281,8 @@ def compute_init_cache_key(
     preset = _effective_init_preset(scene, cfg, preset_override)
     policy = _effective_init_policy(scene, cfg, policy_override)
 
+    model_id = _resolve_model_id_for_preset(init_cfg, preset)
+
     # Cinema SAFE mode: cap Flux2 init resolution/steps to avoid CUDA OOM (preserve aspect ratio).
     # Note: this affects ONLY init-frame generation (conditioning), not the final render resolution.
     try:
@@ -303,6 +338,8 @@ def compute_init_cache_key(
         "prompt=" + (prompt or ""),
         "neg=" + (negative or ""),
     ]
+    if model_id:
+        key_parts.append("model_id=" + model_id)
     # Flags that affect the generated image MUST be part of the cache key.
     try:
         key_parts.append(f"ip_adapter={bool(getattr(init_cfg,'enable_ip_adapter',False))}")
@@ -722,7 +759,7 @@ def _generate_init_fallback(
         seed=seed,
         out_dir=os.path.dirname(out_path),
         filename=os.path.basename(out_path),
-        cache_dir=os.path.join(_project_root(cfg), "hf_cache"),
+        cache_dir=resolve_hf_cache_dir(cfg),
         ref_image_paths=ref_paths,
         enable_ip_adapter=enable_ip,
         ip_adapter_model_id=ip_model_id,
@@ -783,289 +820,57 @@ def generate_init_image_for_scene(
 
     _log(log, f"[InitFrame] generating ({preset}) -> {out_path}")
 
-    if preset in ("flux2_bnb4bit", "flux2"):
-        # IMPORTANT: Flux2 is very heavy. We intentionally unload it after each init frame
-        # generation to free VRAM before the I2V pipeline loads.
-        pipe = _load_flux2_pipe(log)
-        import torch
+    ref_paths = {
+        "character_refs": list(refs.character_refs),
+        "location_refs": list(refs.location_refs),
+        "style_refs": list(refs.style_refs),
+        "extra_refs": list(refs.extra_refs),
+    }
+    anchor_path = None
+    for group in (refs.extra_refs, refs.character_refs, refs.location_refs, refs.style_refs):
+        if group:
+            anchor_path = group[0]
+            break
 
-        try:
-            if seed is None:
-                seed = int.from_bytes(os.urandom(4), "little")
-            # Use a generator on the *execution* device.
-            # When the pipeline is offloaded, forcing a CUDA generator can trigger
-            # device-mismatch errors (CPU/CUDA tensors mixed by accelerate).
-            exec_dev = "cpu"
-            try:
-                if torch.cuda.is_available() and getattr(getattr(pipe, "device", None), "type", "") == "cuda":
-                    exec_dev = "cuda"
-            except Exception:
-                exec_dev = "cuda" if torch.cuda.is_available() else "cpu"
-            generator = torch.Generator(device=exec_dev).manual_seed(int(seed))
+    model_overrides = resolve_model_overrides(init_cfg)
+    cache_dir = resolve_hf_cache_dir(cfg)
 
-            # Load refs by group (best-effort). We still pass a single "image" anchor to img2img
-            # if the pipeline supports it, but also try IP-Adapter if available.
-            def _load_imgs(paths: List[str]) -> List[Image.Image]:
-                out: List[Image.Image] = []
-                for rp in (paths or []):
-                    try:
-                        out.append(Image.open(rp).convert("RGB"))
-                    except Exception:
-                        pass
-                return out
+    job = build_job(
+        preset=preset,
+        prompt=prompt,
+        negative_prompt=negative,
+        width=w,
+        height=h,
+        steps=steps,
+        guidance_scale=gs,
+        seed=seed,
+        out_path=out_path,
+        cache_dir=cache_dir,
+        ref_paths=ref_paths,
+        enable_ip_adapter=bool(getattr(init_cfg, "enable_ip_adapter", False)),
+        ip_adapter_model_id=str(getattr(init_cfg, "ip_adapter_model_id", "") or ""),
+        ip_adapter_subfolder=str(getattr(init_cfg, "ip_adapter_subfolder", "") or ""),
+        ip_adapter_weight_name=str(getattr(init_cfg, "ip_adapter_weight_name", "") or ""),
+        ip_adapter_scale=float(getattr(init_cfg, "ip_adapter_scale_location", 0.6) or 0.6),
+        enable_controlnet=bool(getattr(init_cfg, "enable_controlnet", False)),
+        controlnet_type=str(getattr(init_cfg, "controlnet_type", "canny") or "canny"),
+        controlnet_model_id=str(getattr(init_cfg, "controlnet_model_id", "") or ""),
+        controlnet_scale=float(getattr(init_cfg, "controlnet_scale", 0.75) or 0.75),
+        controlnet_image_paths=list(refs.location_refs or refs.extra_refs or refs.character_refs or []),
+        anchor_image_path=anchor_path,
+        refine_strength=float(getattr(init_cfg, "refine_strength", 0.35) or 0.35),
+        model_overrides=model_overrides,
+        max_sequence_length=512,
+    )
 
-            char_imgs = _load_imgs(refs.character_refs)
-            loc_imgs = _load_imgs(refs.location_refs)
-            style_imgs = _load_imgs(refs.style_refs)
-            extra_imgs = _load_imgs(refs.extra_refs)
-            all_imgs = char_imgs + loc_imgs + style_imgs + extra_imgs
+    w, h = clamp_to_multiple_of_8(w, h)
+    result = run_init_frame_job(job, log=log, target_size=(w, h))
+    if not result.ok or not result.path:
+        raise RuntimeError(result.error or "Init frame generation failed")
 
-            ip_adapter_images: Optional[List[Image.Image]] = None
-            ip_adapter_scales: Optional[List[float]] = None
-            try:
-                if bool(getattr(init_cfg, "enable_ip_adapter", False)) and hasattr(pipe, "load_ip_adapter"):
-                    # Best-effort load + scale setup.
-                    model_id = (getattr(init_cfg, "ip_adapter_model_id", "") or "").strip() or None
-                    subfolder = (getattr(init_cfg, "ip_adapter_subfolder", "") or "").strip() or None
-                    weight_name = (getattr(init_cfg, "ip_adapter_weight_name", "") or "").strip() or None
-                    try:
-                        kwargs_load: Dict[str, Any] = {}
-                        if model_id:
-                            kwargs_load["pretrained_model_name_or_path"] = model_id
-                        if subfolder:
-                            kwargs_load["subfolder"] = subfolder
-                        if weight_name:
-                            kwargs_load["weight_name"] = weight_name
-                        if kwargs_load:
-                            pipe.load_ip_adapter(**_filter_kwargs(pipe.load_ip_adapter, kwargs_load))
-                        else:
-                            # some pipelines load a default adapter without args
-                            pipe.load_ip_adapter()
-                        _log(log, "[InitFrame] IP-Adapter enabled")
-                    except Exception as e:
-                        _log(log, f"[InitFrame] IP-Adapter load skipped: {e}")
-
-                    # Build per-image scales.
-                    csc = float(getattr(init_cfg, "ip_adapter_scale_character", 0.8) or 0.8)
-                    lsc = float(getattr(init_cfg, "ip_adapter_scale_location", 0.6) or 0.6)
-                    ssc = float(getattr(init_cfg, "ip_adapter_scale_style", 0.5) or 0.5)
-                    ip_adapter_images = []
-                    ip_adapter_scales = []
-                    for im in char_imgs:
-                        ip_adapter_images.append(im)
-                        ip_adapter_scales.append(csc)
-                    for im in loc_imgs:
-                        ip_adapter_images.append(im)
-                        ip_adapter_scales.append(lsc)
-                    for im in style_imgs:
-                        ip_adapter_images.append(im)
-                        ip_adapter_scales.append(ssc)
-                    # extra refs are treated as location-ish
-                    for im in extra_imgs:
-                        ip_adapter_images.append(im)
-                        ip_adapter_scales.append(lsc)
-
-                    # Apply scale if method exists.
-                    if hasattr(pipe, "set_ip_adapter_scale") and ip_adapter_scales:
-                        try:
-                            pipe.set_ip_adapter_scale(ip_adapter_scales if len(ip_adapter_scales) > 1 else float(ip_adapter_scales[0]))
-                        except Exception:
-                            pass
-            except Exception:
-                ip_adapter_images = None
-                ip_adapter_scales = None
-
-            kwargs = dict(
-                prompt=prompt,
-                negative_prompt=negative,
-                width=w,
-                height=h,
-                num_inference_steps=steps,
-                guidance_scale=gs,
-                generator=generator,
-            )
-
-            # ControlNet-style conditioning (best-effort; only applied if the pipeline supports it)
-            try:
-                if bool(getattr(init_cfg, 'enable_controlnet', False)) and loc_imgs:
-                    ctrl = loc_imgs[0]
-                    # Different pipelines use different argument names; we set a few and let _filter_kwargs drop unsupported ones.
-                    kwargs['control_image'] = ctrl
-                    kwargs['controlnet_conditioning_image'] = ctrl
-                    kwargs['controlnet_image'] = ctrl
-                    try:
-                        cn_scale = float(getattr(init_cfg, 'controlnet_scale', 0.75) or 0.75)
-                    except Exception:
-                        cn_scale = 0.75
-                    kwargs['controlnet_conditioning_scale'] = cn_scale
-                    kwargs['controlnet_scale'] = cn_scale
-            except Exception:
-                pass
-
-            # Use the "best" single anchor for img2img refinement if supported.
-            anchor = None
-            if extra_imgs:
-                anchor = extra_imgs[0]
-            elif char_imgs:
-                anchor = char_imgs[0]
-            elif loc_imgs:
-                anchor = loc_imgs[0]
-            elif style_imgs:
-                anchor = style_imgs[0]
-            elif all_imgs:
-                anchor = all_imgs[0]
-            if anchor is not None:
-                kwargs["image"] = anchor
-                # refine strength (best-effort; ignored if unsupported)
-                try:
-                    kwargs["strength"] = float(getattr(init_cfg, "refine_strength", 0.35) or 0.35)
-                except Exception:
-                    pass
-
-            # IP-Adapter conditioning (best-effort)
-            if ip_adapter_images:
-                kwargs["ip_adapter_image"] = ip_adapter_images if len(ip_adapter_images) > 1 else ip_adapter_images[0]
-
-            kwargs = _filter_kwargs(pipe.__call__, kwargs)
-            with torch.inference_mode():
-                try:
-                    out = pipe(**kwargs)
-                except Exception as e:
-                    # Common failure mode under offload: parts end up on meta.
-                    if _has_meta_tensor_error(e):
-                        _log(log, "[Flux2] Meta-tensor error during init frame. Reloading pipeline and retrying once…")
-                        try:
-                            unload_flux2_pipe(log)
-                        except Exception:
-                            pass
-                        # Reload and re-apply patch.
-                        pipe2 = _load_flux2_pipe(log)
-                        kwargs2 = _filter_kwargs(pipe2.__call__, dict(kwargs))
-                        out = pipe2(**kwargs2)
-
-                    elif _is_device_mismatch_error(e):
-                        # Some accelerator/offload setups can end up mixing CPU/CUDA tensors.
-                        # Best-effort recovery: reload and force a pure-CUDA execution path.
-                        _log(log, "[Flux2] Device mismatch during init frame. Reloading (force_cuda) and retrying once…")
-                        try:
-                            unload_flux2_pipe(log)
-                        except Exception:
-                            pass
-                        pipe2 = _load_flux2_pipe(log, force_cuda=True)
-                        kwargs2 = _filter_kwargs(pipe2.__call__, dict(kwargs))
-                        # Ensure generator matches execution device.
-                        try:
-                            import torch
-                            if torch.cuda.is_available():
-                                kwargs2['generator'] = torch.Generator(device='cuda').manual_seed(int(seed))
-                        except Exception:
-                            pass
-                        out = pipe2(**kwargs2)
-
-                    elif _is_oom_error(e):
-                        # Flux2 init can OOM on large init resolutions even on 24GB cards.
-                        # Retry once with reduced resolution + steps before falling back.
-                        _log(log, "[Flux2] CUDA OOM during init frame. Retrying with smaller settings…")
-                        try:
-                            from .resource_manager import cuda_cleanup
-                            cuda_cleanup(aggressive=True)
-                        except Exception:
-                            try:
-                                import torch
-                                if torch.cuda.is_available():
-                                    torch.cuda.empty_cache()
-                            except Exception:
-                                pass
-                        import math
-                        try:
-                            w0, h0 = int(kwargs.get('width', w)), int(kwargs.get('height', h))
-                        except Exception:
-                            w0, h0 = int(w), int(h)
-                        area0 = max(1, w0 * h0)
-                        # shrink more aggressively (init frames are just anchors)
-                        target_area = max(256*256, int(area0 * 0.55))
-                        sc = math.sqrt(float(target_area) / float(area0))
-                        w2 = max(256, int((w0 * sc) // 8) * 8)
-                        h2 = max(256, int((h0 * sc) // 8) * 8)
-                        kwargs3 = dict(kwargs)
-                        kwargs3['width'] = w2
-                        kwargs3['height'] = h2
-                        try:
-                            kwargs3['num_inference_steps'] = max(10, int(kwargs3.get('num_inference_steps', steps)) - 8)
-                        except Exception:
-                            pass
-                        kwargs3 = _filter_kwargs(pipe.__call__, kwargs3)
-                        out = pipe(**kwargs3)
-
-                    else:
-                        raise
-
-            img = None
-            try:
-                if getattr(out, "images", None):
-                    img = out.images[0]
-            except Exception:
-                img = None
-            if img is None:
-                raise RuntimeError("[Flux2] No image returned")
-
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            img.save(out_path)
-
-        except Exception as e:
-            # Resilience: if Flux2 init-frame fails (meta tensor / offload issues / driver quirks),
-            # fall back to a smaller, robust init generator. An init frame is critical for I2V stability.
-            fb = str(getattr(init_cfg, "fallback_preset", "sdxl_base") or "sdxl_base").strip() or "sdxl_base"
-            _log(log, f"⚠️ InitFrame Flux2 failed: {e} — fallback → {fb}")
-            out_path = _generate_init_fallback(
-                scene=scene,
-                cfg=cfg,
-                refs=refs,
-                prompt=prompt,
-                negative=negative,
-                preset=fb,
-                width=w,
-                height=h,
-                steps=steps,
-                guidance_scale=gs,
-                seed=seed,
-                out_path=out_path,
-                log=log,
-            )
-
-        finally:
-            # Always free VRAM for the next stage (Wan/LTX/CogVideoX).
-            try:
-                unload_flux2_pipe(log)
-            except Exception:
-                pass
-            try:
-                from .resource_manager import cuda_cleanup
-                cuda_cleanup()
-            except Exception:
-                pass
-
-    else:
-        # Non-Flux2 preset -> use the robust fallback generator.
-        out_path = _generate_init_fallback(
-            scene=scene,
-            cfg=cfg,
-            refs=refs,
-            prompt=prompt,
-            negative=negative,
-            preset=preset,
-            width=w,
-            height=h,
-            steps=steps,
-            guidance_scale=gs,
-            seed=seed,
-            out_path=out_path,
-            log=log,
-        )
-
-    cache[key] = CacheItem(path=_safe_abspath(out_path), seed=int(seed or 0), created_ts=int(time.time()))
+    cache[key] = CacheItem(path=_safe_abspath(result.path), seed=int(result.seed or 0), created_ts=int(time.time()))
     save_cache(cache_json, cache)
 
-    scene.init_frame_path = _safe_abspath(out_path)
+    scene.init_frame_path = _safe_abspath(result.path)
     scene.init_frame_hash = key
     return InitGenResult(path=scene.init_frame_path, cache_key=key, cache_hit=False)
