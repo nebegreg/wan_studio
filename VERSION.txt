@@ -1,0 +1,30 @@
+Wan Studio — Cinema Clean v1 (Unified)
+Build date: 2026-01-21
+Base: hotfix26_cut_transitions
+
+Key features included
+- Backend guard rails: prevents mixing Wan model_id with LTX2 pipelines (auto-fix backend)
+- RIFE interpolation chaining: supports 4x/8x by chaining 2x passes; fallback to ffmpeg interpolate for non power-of-two ratios
+- Stable stitching: overlap frames are blended then overwritten (no duplicated frames / stutter)
+- Init Image Settings UI: presets (Flux2/Flux1/SDXL), policy, style refs, IP-Adapter/ControlNet (best-effort)
+- Cache Manager UI: view sizes, clear caches, prune to quota (cfg.cache_max_gb)
+- Clip cache: per-clip hash cache (prompt+refs+settings+anchor) to skip rerenders safely
+- Prompt realism guard: moves anime/cartoon/illustration tokens to negative prompt when using cinematic/realism packs
+- Montage transitions: global transition mode (cut/crossfade/flow) + per-clip override
+- Audio pipeline: per-shot dialogue (Piper), stems export, music bed, VFX track, auto ducking, mux
+
+Run
+- python app.py
+
+Hotfix (2026-01-21)
+- Stability controls: reset_continuity_between_clips (no conditioning spill between clips)
+- Strict clip coherence: strict_clip_coherence (anti-drift prompt guardrails + seed lock within clip)
+- Seam fix: force_first_frame_to_conditioning (frame0 pinned to conditioning image to prevent chunk pops)
+- Studio range workflow: IN/OUT markers + render Range (legacy stitch), Proxy Range, Final Range
+- Render tab: quick actions for Premiere selection/range
+- Post-prod: advanced denoise + unsharp parameters exposed in GUI
+
+V16 (2026-01-21)
+- Scheduler (advanced) UI: toggle UniPC + flow_shift
+- Cache UI: clip_cache_dirname configurable
+- Studio: Audit report dialog (env + project snapshot)

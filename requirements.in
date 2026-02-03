@@ -1,0 +1,16 @@
+PySide6>=6.6
+qdarkstyle
+numpy
+Pillow
+opencv-python
+ftfy>=6.1.1
+accelerate
+safetensors
+imageio
+imageio-ffmpeg
+huggingface_hub>=0.23.0
+transformers
+peft
+
+# Diffusers video pipelines evolve quickly. LTX-2 requires diffusers >= 0.36.0.
+diffusers>=0.36.0

@@ -1,0 +1,57 @@
+{
+  "male": [
+    {
+      "id": "fr_FR-tom-medium",
+      "pitch": 1.0
+    },
+    {
+      "id": "fr_FR-upmc-medium",
+      "speaker": 1,
+      "pitch": 1.0
+    },
+    {
+      "id": "fr_FR-mls-medium",
+      "speaker": 1,
+      "pitch": 1.0
+    }
+  ],
+  "female": [
+    {
+      "id": "fr_FR-siwis-medium",
+      "pitch": 1.0
+    },
+    {
+      "id": "fr_FR-upmc-medium",
+      "speaker": 0,
+      "pitch": 1.0
+    },
+    {
+      "id": "fr_FR-mls-medium",
+      "speaker": 0,
+      "pitch": 1.0
+    }
+  ],
+  "child": [
+    {
+      "id": "fr_FR-siwis-medium",
+      "pitch": 1.25
+    },
+    {
+      "id": "fr_FR-upmc-medium",
+      "speaker": 0,
+      "pitch": 1.35
+    },
+    {
+      "id": "fr_FR-mls-medium",
+      "speaker": 0,
+      "pitch": 1.3
+    }
+  ],
+  "notes": {
+    "speaker_indexing": {
+      "fr_FR-upmc-medium": "2 speakers: speaker 0 = female, speaker 1 = male",
+      "fr_FR-mls-medium": "2 speakers: speaker 0 = female, speaker 1 = male"
+    },
+    "source": "rhasspy/piper-voices (official) + speaker hints from k2-fsa/text-to-speech demo"
+  }
+}
