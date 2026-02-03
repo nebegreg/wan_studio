@@ -2994,7 +2994,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Ciné stable: force 0 overlap + cut stitching (prevents flow/blend artefacts)
         # --- Cinema SAFE mode ---
-        self.cb_cinema_safe = QtWidgets.QCheckBox("🎬 Cinema SAFE mode (zéro crash / anti-OOM) — recommandé")
+        self.cb_cinema_safe = QtWidgets.QCheckBox("🛡️ SAFE DEMO MODE (ciné) — zéro crash / anti-OOM")
         self.cb_cinema_safe.setChecked(bool(getattr(self.cfg, 'cinema_safe_mode', True)))
         self.cb_cinema_safe.setToolTip("Force des réglages stables: cut/no-overlap, UniPC OFF (Wan), offload séquentiel ON, retries OOM. Plus lent mais très robuste.")
         self.cb_cinema_safe.toggled.connect(self._update_cinema_safe_ui)
@@ -3062,11 +3062,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.cb_init_preset = QtWidgets.QComboBox(); self.cb_init_preset.setEditable(True)
         self.cb_init_preset.addItems([
+            'zimage_turbo', 'zimage',
             'flux2_bnb4bit', 'flux2',
             'sdxl_lightning_4step', 'sdxl_base', 'sdxl_turbo',
             'flux1_schnell'
         ])
-        self.cb_init_preset.setCurrentText(str(getattr(init, 'preset', 'flux2_bnb4bit') if init else 'flux2_bnb4bit'))
+        self.cb_init_preset.setCurrentText(str(getattr(init, 'preset', 'zimage_turbo') if init else 'zimage_turbo'))
 
         self.cb_init_policy = QtWidgets.QComboBox()
         self.cb_init_policy.addItem('necessary', 'necessary')
@@ -3120,6 +3121,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_cn_scale = QtWidgets.QDoubleSpinBox(); self.sp_cn_scale.setRange(0.0, 2.0); self.sp_cn_scale.setDecimals(2); self.sp_cn_scale.setValue(float(getattr(init, 'controlnet_scale', 0.75) if init else 0.75))
         self.sp_refine = QtWidgets.QDoubleSpinBox(); self.sp_refine.setRange(0.0, 1.0); self.sp_refine.setDecimals(2); self.sp_refine.setValue(float(getattr(init, 'refine_strength', 0.35) if init else 0.35))
 
+        # Optional model overrides (avoid hardcoded model IDs)
+        self.le_init_flux2_bnb4bit = QtWidgets.QLineEdit(str(getattr(init, 'flux2_bnb4bit_model_id', '') if init else ''))
+        self.le_init_flux2_full = QtWidgets.QLineEdit(str(getattr(init, 'flux2_model_id', '') if init else ''))
+        self.le_init_zimage_turbo = QtWidgets.QLineEdit(str(getattr(init, 'zimage_turbo_model_id', '') if init else ''))
+        self.le_init_zimage = QtWidgets.QLineEdit(str(getattr(init, 'zimage_model_id', '') if init else ''))
+        self.le_init_sdxl_base = QtWidgets.QLineEdit(str(getattr(init, 'sdxl_base_model_id', '') if init else ''))
+        self.le_init_sdxl_turbo = QtWidgets.QLineEdit(str(getattr(init, 'sdxl_turbo_model_id', '') if init else ''))
+        self.le_init_sdxl_lora = QtWidgets.QLineEdit(str(getattr(init, 'sdxl_lightning_lora_id', '') if init else ''))
+        self.le_init_sdxl_lora_file = QtWidgets.QLineEdit(str(getattr(init, 'sdxl_lightning_lora_file', '') if init else ''))
+        self.le_init_flux1 = QtWidgets.QLineEdit(str(getattr(init, 'flux1_schnell_model_id', '') if init else ''))
+
         gl_init.addRow(self.cb_init_enabled)
         gl_init.addRow('Preset', self.cb_init_preset)
         gl_init.addRow('Policy', self.cb_init_policy)
@@ -3145,6 +3157,17 @@ class MainWindow(QtWidgets.QMainWindow):
         gl_init.addRow('ControlNet model id', self.le_cn_model)
         gl_init.addRow('ControlNet scale', self.sp_cn_scale)
         gl_init.addRow('Refine strength', self.sp_refine)
+
+        gl_init.addRow(QtWidgets.QLabel("<b>Model overrides (optional)</b>"))
+        gl_init.addRow('Flux2 bnb4bit model id', self.le_init_flux2_bnb4bit)
+        gl_init.addRow('Flux2 full model id', self.le_init_flux2_full)
+        gl_init.addRow('Z-Image Turbo model id', self.le_init_zimage_turbo)
+        gl_init.addRow('Z-Image model id', self.le_init_zimage)
+        gl_init.addRow('SDXL base model id', self.le_init_sdxl_base)
+        gl_init.addRow('SDXL turbo model id', self.le_init_sdxl_turbo)
+        gl_init.addRow('SDXL Lightning LoRA repo', self.le_init_sdxl_lora)
+        gl_init.addRow('SDXL Lightning LoRA file', self.le_init_sdxl_lora_file)
+        gl_init.addRow('Flux1 schnell model id', self.le_init_flux1)
 
         lay.addRow(gb_init)
 
@@ -4149,7 +4172,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if hasattr(self, 'cb_init_enabled'):
                     init.enabled = bool(self.cb_init_enabled.isChecked())
                 if hasattr(self, 'cb_init_preset'):
-                    init.preset = self.cb_init_preset.currentText().strip() or getattr(init, 'preset', 'flux2_bnb4bit')
+                    init.preset = self.cb_init_preset.currentText().strip() or getattr(init, 'preset', 'zimage_turbo')
                 if hasattr(self, 'cb_init_policy'):
                     init.policy = str(self.cb_init_policy.currentData() or self.cb_init_policy.currentText()).strip() or 'necessary'
                 if hasattr(self, 'cb_init_cache_loc'):
@@ -4194,6 +4217,25 @@ class MainWindow(QtWidgets.QMainWindow):
                     init.controlnet_scale = float(self.sp_cn_scale.value())
                 if hasattr(self, 'sp_refine'):
                     init.refine_strength = float(self.sp_refine.value())
+
+                if hasattr(self, 'le_init_flux2_bnb4bit'):
+                    init.flux2_bnb4bit_model_id = self.le_init_flux2_bnb4bit.text().strip()
+                if hasattr(self, 'le_init_flux2_full'):
+                    init.flux2_model_id = self.le_init_flux2_full.text().strip()
+                if hasattr(self, 'le_init_zimage_turbo'):
+                    init.zimage_turbo_model_id = self.le_init_zimage_turbo.text().strip()
+                if hasattr(self, 'le_init_zimage'):
+                    init.zimage_model_id = self.le_init_zimage.text().strip()
+                if hasattr(self, 'le_init_sdxl_base'):
+                    init.sdxl_base_model_id = self.le_init_sdxl_base.text().strip()
+                if hasattr(self, 'le_init_sdxl_turbo'):
+                    init.sdxl_turbo_model_id = self.le_init_sdxl_turbo.text().strip()
+                if hasattr(self, 'le_init_sdxl_lora'):
+                    init.sdxl_lightning_lora_id = self.le_init_sdxl_lora.text().strip()
+                if hasattr(self, 'le_init_sdxl_lora_file'):
+                    init.sdxl_lightning_lora_file = self.le_init_sdxl_lora_file.text().strip()
+                if hasattr(self, 'le_init_flux1'):
+                    init.flux1_schnell_model_id = self.le_init_flux1.text().strip()
         except Exception:
             pass
 
@@ -4404,7 +4446,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if hasattr(self, 'cb_init_enabled'):
                     self.cb_init_enabled.setChecked(bool(getattr(init, 'enabled', False)))
                 if hasattr(self, 'cb_init_preset'):
-                    self.cb_init_preset.setCurrentText(getattr(init, 'preset', 'flux2_bnb4bit') or 'flux2_bnb4bit')
+                    self.cb_init_preset.setCurrentText(getattr(init, 'preset', 'zimage_turbo') or 'zimage_turbo')
                 if hasattr(self, 'cb_init_policy'):
                     # prefer data if combo stores it
                     pol = getattr(init, 'policy', 'necessary') or 'necessary'
@@ -4466,6 +4508,24 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.sp_cn_scale.setValue(float(getattr(init, 'controlnet_scale', 1.0) or 1.0))
                 if hasattr(self, 'sp_refine'):
                     self.sp_refine.setValue(float(getattr(init, 'refine_strength', 0.3) or 0.3))
+                if hasattr(self, 'le_init_flux2_bnb4bit'):
+                    self.le_init_flux2_bnb4bit.setText(getattr(init, 'flux2_bnb4bit_model_id', '') or '')
+                if hasattr(self, 'le_init_flux2_full'):
+                    self.le_init_flux2_full.setText(getattr(init, 'flux2_model_id', '') or '')
+                if hasattr(self, 'le_init_zimage_turbo'):
+                    self.le_init_zimage_turbo.setText(getattr(init, 'zimage_turbo_model_id', '') or '')
+                if hasattr(self, 'le_init_zimage'):
+                    self.le_init_zimage.setText(getattr(init, 'zimage_model_id', '') or '')
+                if hasattr(self, 'le_init_sdxl_base'):
+                    self.le_init_sdxl_base.setText(getattr(init, 'sdxl_base_model_id', '') or '')
+                if hasattr(self, 'le_init_sdxl_turbo'):
+                    self.le_init_sdxl_turbo.setText(getattr(init, 'sdxl_turbo_model_id', '') or '')
+                if hasattr(self, 'le_init_sdxl_lora'):
+                    self.le_init_sdxl_lora.setText(getattr(init, 'sdxl_lightning_lora_id', '') or '')
+                if hasattr(self, 'le_init_sdxl_lora_file'):
+                    self.le_init_sdxl_lora_file.setText(getattr(init, 'sdxl_lightning_lora_file', '') or '')
+                if hasattr(self, 'le_init_flux1'):
+                    self.le_init_flux1.setText(getattr(init, 'flux1_schnell_model_id', '') or '')
         except Exception:
             pass
 
@@ -6028,12 +6088,15 @@ class MainWindow(QtWidgets.QMainWindow):
             os.makedirs(out_root, exist_ok=True)
             init_cfg = getattr(self.cfg, 'init_image', None)
             # Keep the manual init dialog consistent with global init-frame settings.
-            default_preset = getattr(init_cfg, 'preset', 'flux2_bnb4bit') if init_cfg else 'flux2_bnb4bit'
+            default_preset = getattr(init_cfg, 'preset', 'zimage_turbo') if init_cfg else 'zimage_turbo'
+            from .init_frame_subprocess import clamp_to_multiple_of_8
             default_w = int((getattr(init_cfg, 'width', 0) if init_cfg else 0) or getattr(self.cfg, 'width', 1024) or 1024)
             default_h = int((getattr(init_cfg, 'height', 0) if init_cfg else 0) or getattr(self.cfg, 'height', 1024) or 1024)
+            default_w, default_h = clamp_to_multiple_of_8(default_w, default_h)
             default_steps = int(getattr(init_cfg, 'steps', 28) if init_cfg else 28)
             default_gs = float(getattr(init_cfg, 'guidance_scale', 4.5) if init_cfg else 4.5)
 
+            from .init_frame_subprocess import resolve_hf_cache_dir
             dlg = ImageInitDialog(
                 self,
                 default_prompt=default_prompt,
@@ -6044,7 +6107,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 default_steps=default_steps,
                 default_guidance=default_gs,
                 out_root=out_root,
-                cache_dir=getattr(self.cfg, 'hf_cache_dir', None),
+                cache_dir=resolve_hf_cache_dir(self.cfg),
             )
             if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
                 return None

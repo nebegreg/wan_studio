@@ -807,7 +807,7 @@ class ClipInspector(QtWidgets.QWidget):
         self.lbl_init_path = QtWidgets.QLabel('Init frame: (none)')
         self.lbl_init_path.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.btn_regen_init = QtWidgets.QPushButton('Regenerate init frame')
-        self.btn_regen_init.setToolTip('Generate/refresh a Flux2 init frame for this shot')
+        self.btn_regen_init.setToolTip('Generate/refresh an init frame for this shot')
 
         # Init Image Settings (per-clip)
         self.cb_init_preset = QtWidgets.QComboBox()
@@ -822,7 +822,10 @@ class ClipInspector(QtWidgets.QWidget):
             cb.setItemData(cb.count()-1, data)
 
         _add_cb_item(self.cb_init_preset, '(project default)', '')
-        _add_cb_item(self.cb_init_preset, 'Flux2 (bnb 4bit) — default', 'flux2_bnb4bit')
+        _add_cb_item(self.cb_init_preset, 'Z-Image Turbo — default', 'zimage_turbo')
+        _add_cb_item(self.cb_init_preset, 'Z-Image (full)', 'zimage')
+        _add_cb_item(self.cb_init_preset, 'Flux2 (bnb 4bit)', 'flux2_bnb4bit')
+        _add_cb_item(self.cb_init_preset, 'Flux2 (full)', 'flux2')
         _add_cb_item(self.cb_init_preset, 'Flux1 schnell', 'flux1_schnell')
         _add_cb_item(self.cb_init_preset, 'SDXL Lightning (4-step)', 'sdxl_lightning_4step')
         _add_cb_item(self.cb_init_preset, 'SDXL base', 'sdxl_base')

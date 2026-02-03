@@ -6,7 +6,7 @@ from typing import Optional, Dict
 
 from PySide6 import QtWidgets, QtCore
 
-from .ai_image_init import generate_init_image, ImageGenResult
+from .init_frame_subprocess import build_job, run_init_frame_job, resolve_hf_cache_dir, clamp_to_multiple_of_8
 
 
 # -----------------------------------------------------------------------------
@@ -150,7 +150,7 @@ class ImageInitResult:
 
 
 class _GenWorker(QtCore.QObject):
-    finished = QtCore.Signal(object)  # ImageGenResult
+    finished = QtCore.Signal(object)  # InitFrameSubprocessResult
     error = QtCore.Signal(str)
 
     def __init__(
@@ -182,18 +182,24 @@ class _GenWorker(QtCore.QObject):
     @QtCore.Slot()
     def run(self):
         try:
-            res = generate_init_image(
+            w, h = clamp_to_multiple_of_8(self.width, self.height)
+            out_path = os.path.join(self.out_dir, "init_dialog.png")
+            job = build_job(
+                preset=self.preset,
                 prompt=self.prompt,
                 negative_prompt=self.negative_prompt,
-                preset=self.preset,
-                width=self.width,
-                height=self.height,
+                width=w,
+                height=h,
                 steps=self.steps,
                 guidance_scale=self.guidance,
                 seed=self.seed,
-                out_dir=self.out_dir,
+                out_path=out_path,
                 cache_dir=self.cache_dir,
+                max_sequence_length=512,
             )
+            res = run_init_frame_job(job, target_size=(w, h))
+            if not res.ok:
+                raise RuntimeError(res.error or "Init image failed")
             self.finished.emit(res)
         except Exception as e:
             self.error.emit(str(e))
@@ -206,7 +212,9 @@ class ImageInitDialog(QtWidgets.QDialog):
     """
 
     PRESETS: Dict[str, str] = {
-        "FLUX.2-dev-bnb-4bit (default)": "flux2_bnb4bit",
+        "Z-Image Turbo (default)": "zimage_turbo",
+        "Z-Image (full)": "zimage",
+        "FLUX.2-dev-bnb-4bit": "flux2_bnb4bit",
         "FLUX.2-dev (full)": "flux2",
         "SDXL-Lightning 4-step (fast)": "sdxl_lightning_4step",
         "SDXL Base (quality)": "sdxl_base",
@@ -220,7 +228,7 @@ class ImageInitDialog(QtWidgets.QDialog):
         *,
         default_prompt: str = "",
         default_negative: str = "",
-        default_preset_key: str = "flux2_bnb4bit",
+        default_preset_key: str = "zimage_turbo",
         default_width: int = 0,
         default_height: int = 0,
         default_steps: int = 28,
@@ -248,7 +256,7 @@ class ImageInitDialog(QtWidgets.QDialog):
         for k in self.PRESETS.keys():
             self.cb_preset.addItem(k)
         # Select preset by key (fallback to first).
-        want_key = str(default_preset_key or "flux2_bnb4bit")
+        want_key = str(default_preset_key or "zimage_turbo")
         selected_index = 0
         for i in range(self.cb_preset.count()):
             k = self.cb_preset.itemText(i)
