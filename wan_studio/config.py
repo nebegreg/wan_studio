@@ -230,7 +230,7 @@ class InitImageSpec:
     # I2V normally expects an explicit init image; auto-generation should only
     # happen when the user enables it.
     enabled: bool = False
-    preset: str = "flux2_bnb4bit"   # default init-frame preset
+    preset: str = "zimage_turbo"   # default init-frame preset
     # Default per spec: ALWAYS refine the init frame even if one already exists.
     # (User can switch to "necessary" to rely on cache hits.)
     policy: str = "necessary"   # necessary | always_refine
@@ -267,6 +267,17 @@ class InitImageSpec:
     controlnet_model_id: str = ''    # optional HF repo id; if empty, use sane defaults
     controlnet_scale: float = 0.75
     refine_strength: float = 0.35    # img2img strength for refine-capable pipelines
+
+    # --- optional model overrides (UI + env; avoids hardcoded paths) ---
+    flux2_bnb4bit_model_id: str = ""
+    flux2_model_id: str = ""
+    zimage_turbo_model_id: str = ""
+    zimage_model_id: str = ""
+    sdxl_base_model_id: str = ""
+    sdxl_turbo_model_id: str = ""
+    sdxl_lightning_lora_id: str = ""
+    sdxl_lightning_lora_file: str = ""
+    flux1_schnell_model_id: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -735,7 +746,12 @@ class ProjectConfig:
         if "cut_strict" in dd and "cut_strict_between_clips" not in dd:
             dd["cut_strict_between_clips"] = bool(dd.get("cut_strict"))
 
-        scenes = [SceneSpec.from_dict(x) for x in (dd.get("scenes") or []) if isinstance(x, dict)]
+        scenes_raw = dd.get("scenes") or []
+        if isinstance(scenes_raw, dict):
+            scenes_iter = list(scenes_raw.values())
+        else:
+            scenes_iter = list(scenes_raw) if isinstance(scenes_raw, list) else []
+        scenes = [SceneSpec.from_dict(x) for x in scenes_iter if isinstance(x, dict)]
         loras = [LoraSpec.from_dict(x) for x in (dd.get("loras") or []) if isinstance(x, dict)]
         post = PostProcessSpec.from_dict(dd.get("post", {})) if isinstance(dd.get("post", {}), dict) else PostProcessSpec()
         batch = BatchSpec.from_dict(dd.get("batch", {})) if isinstance(dd.get("batch", {}), dict) else BatchSpec()

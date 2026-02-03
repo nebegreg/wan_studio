@@ -49,6 +49,16 @@ def _log(log: Optional[Callable[[str], None]], msg: str):
     if callable(log):
         log(msg)
 
+
+def _resolve_model_override(model_overrides: Optional[Dict[str, str]], key: str, env_key: str, default: str) -> str:
+    try:
+        val = (model_overrides or {}).get(key) or ""
+    except Exception:
+        val = ""
+    if not val:
+        val = os.environ.get(env_key, "") or ""
+    return val.strip() or default
+
 def _make_control_image_pil(img):
     """Best-effort edge map using PIL only (no opencv dependency).
 
@@ -97,6 +107,8 @@ def generate_init_image(
     anchor_image_path: Optional[str] = None,
     refine_strength: float = 0.35,
     log: Optional[Callable[[str], None]] = None,
+    model_overrides: Optional[Dict[str, str]] = None,
+    max_sequence_length: Optional[int] = None,
 ) -> ImageGenResult:
     """Generate a single PNG image and return its path.
 
@@ -154,6 +166,40 @@ def generate_init_image(
             control_img = _make_control_image_pil(control_img)
 
     try:
+        if preset in ("zimage_turbo", "zimage"):
+            from diffusers import AutoPipelineForText2Image
+
+            model_id = _resolve_model_override(
+                model_overrides,
+                "zimage_turbo_model_id" if preset == "zimage_turbo" else "zimage_model_id",
+                "WAN_INIT_ZIMAGE_TURBO_MODEL" if preset == "zimage_turbo" else "WAN_INIT_ZIMAGE_MODEL",
+                "Tongyi-MAI/Z-Image-Turbo" if preset == "zimage_turbo" else "Tongyi-MAI/Z-Image",
+            )
+            _log(log, f"[InitImage] Loading Z-Image: {model_id}")
+            pipe = AutoPipelineForText2Image.from_pretrained(model_id, torch_dtype=dtype, cache_dir=cache_dir)
+            pipe = pipe.to(device)
+
+            kwargs = dict(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                num_inference_steps=int(steps or 8),
+                guidance_scale=float(guidance_scale or 3.5),
+                generator=generator,
+            )
+            if max_sequence_length is not None:
+                try:
+                    if "max_sequence_length" in pipe.__call__.__code__.co_varnames:
+                        kwargs["max_sequence_length"] = int(max_sequence_length)
+                except Exception:
+                    pass
+
+            out = pipe(**kwargs)
+            img = out.images[0]
+            img.save(out_path)
+            return ImageGenResult(path=out_path, seed=int(seed), width=width, height=height, steps=int(steps or 8), preset=preset)
+
         if preset == "sdxl_lightning_4step":
             from diffusers import EulerDiscreteScheduler
             # Choose pipeline: txt2img / img2img / ControlNet (best-effort)
@@ -176,9 +222,24 @@ def generate_init_image(
             except Exception:
                 pass
 
-            base_id = "stabilityai/stable-diffusion-xl-base-1.0"
-            lora_repo = "ByteDance/SDXL-Lightning"
-            lora_file = "sdxl_lightning_4step_lora.safetensors"
+            base_id = _resolve_model_override(
+                model_overrides,
+                "sdxl_base_model_id",
+                "WAN_INIT_SDXL_BASE_MODEL",
+                "stabilityai/stable-diffusion-xl-base-1.0",
+            )
+            lora_repo = _resolve_model_override(
+                model_overrides,
+                "sdxl_lightning_lora_id",
+                "WAN_INIT_SDXL_LIGHTNING_LORA",
+                "ByteDance/SDXL-Lightning",
+            )
+            lora_file = _resolve_model_override(
+                model_overrides,
+                "sdxl_lightning_lora_file",
+                "WAN_INIT_SDXL_LIGHTNING_LORA_FILE",
+                "sdxl_lightning_4step_lora.safetensors",
+            )
 
             _log(log, f"[InitImage] Loading SDXL base: {base_id}")
             controlnet = None
@@ -257,7 +318,12 @@ def generate_init_image(
             except Exception:
                 pass
 
-            base_id = "stabilityai/stable-diffusion-xl-base-1.0"
+            base_id = _resolve_model_override(
+                model_overrides,
+                "sdxl_base_model_id",
+                "WAN_INIT_SDXL_BASE_MODEL",
+                "stabilityai/stable-diffusion-xl-base-1.0",
+            )
             _log(log, f"[InitImage] Loading SDXL base: {base_id}")
             controlnet = None
             if enable_controlnet and StableDiffusionXLControlNetPipeline is not None:
@@ -303,7 +369,12 @@ def generate_init_image(
         elif preset == "sdxl_turbo":
             from diffusers import AutoPipelineForText2Image
 
-            model_id = "stabilityai/sdxl-turbo"
+            model_id = _resolve_model_override(
+                model_overrides,
+                "sdxl_turbo_model_id",
+                "WAN_INIT_SDXL_TURBO_MODEL",
+                "stabilityai/sdxl-turbo",
+            )
             _log(log, f"[InitImage] Loading SDXL Turbo: {model_id}")
             pipe = AutoPipelineForText2Image.from_pretrained(
                 model_id,
@@ -326,7 +397,12 @@ def generate_init_image(
                 ) from e
 
             # Default model IDs.
-            model_id = "black-forest-labs/FLUX.2-dev-bnb-4bit" if preset == "flux2_bnb4bit" else "black-forest-labs/FLUX.2-dev"
+            model_id = _resolve_model_override(
+                model_overrides,
+                "flux2_bnb4bit_model_id" if preset == "flux2_bnb4bit" else "flux2_model_id",
+                "WAN_INIT_FLUX2_BNB4BIT_MODEL" if preset == "flux2_bnb4bit" else "WAN_INIT_FLUX2_MODEL",
+                "black-forest-labs/FLUX.2-dev-bnb-4bit" if preset == "flux2_bnb4bit" else "black-forest-labs/FLUX.2-dev",
+            )
             _log(log, f"[InitImage] Loading FLUX2: {model_id}")
             pipe = Flux2Pipeline.from_pretrained(
                 model_id,
@@ -346,7 +422,12 @@ def generate_init_image(
                     "FluxPipeline non disponible dans diffusers. Mets à jour diffusers (main/dev) ou utilise SDXL."
                 ) from e
 
-            model_id = "black-forest-labs/FLUX.1-schnell"
+            model_id = _resolve_model_override(
+                model_overrides,
+                "flux1_schnell_model_id",
+                "WAN_INIT_FLUX1_SCHNELL_MODEL",
+                "black-forest-labs/FLUX.1-schnell",
+            )
             _log(log, f"[InitImage] Loading FLUX.1-schnell: {model_id}")
             pipe = FluxPipeline.from_pretrained(
                 model_id,

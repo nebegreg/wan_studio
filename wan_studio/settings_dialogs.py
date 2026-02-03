@@ -49,7 +49,10 @@ class InitImageSettingsDialog(QtWidgets.QDialog):
 
         self.cb_preset = QtWidgets.QComboBox()
         self._preset_items = [
-            ("Flux2 (bnb 4bit) — default", "flux2_bnb4bit"),
+            ("Z-Image Turbo — default", "zimage_turbo"),
+            ("Z-Image (full)", "zimage"),
+            ("Flux2 (bnb 4bit)", "flux2_bnb4bit"),
+            ("Flux2 (full)", "flux2"),
             ("Flux1 schnell", "flux1_schnell"),
             ("SDXL Lightning (4-step)", "sdxl_lightning_4step"),
             ("SDXL base", "sdxl_base"),
@@ -57,7 +60,7 @@ class InitImageSettingsDialog(QtWidgets.QDialog):
         ]
         for label, key in self._preset_items:
             self.cb_preset.addItem(label, key)
-        self._set_combo_data(self.cb_preset, str(getattr(self.spec, "preset", "flux2_bnb4bit") or "flux2_bnb4bit"))
+        self._set_combo_data(self.cb_preset, str(getattr(self.spec, "preset", "zimage_turbo") or "zimage_turbo"))
 
         self.cb_policy = QtWidgets.QComboBox()
         self.cb_policy.addItem("necessary (use cache)", "necessary")
@@ -160,6 +163,33 @@ class InitImageSettingsDialog(QtWidgets.QDialog):
         al.addRow("Refine strength", self.sp_refine)
         tabs.addTab(ad, "Adapters")
 
+        # ---------------- Models ----------------
+        models = QtWidgets.QWidget()
+        ml = QtWidgets.QFormLayout(models)
+        ml.addRow(QtWidgets.QLabel("<b>Model overrides (optional)</b> — laisse vide pour utiliser les IDs par défaut/env."))
+
+        self.ed_flux2_bnb4bit = QtWidgets.QLineEdit(str(getattr(self.spec, "flux2_bnb4bit_model_id", "") or ""))
+        self.ed_flux2_full = QtWidgets.QLineEdit(str(getattr(self.spec, "flux2_model_id", "") or ""))
+        self.ed_zimage_turbo = QtWidgets.QLineEdit(str(getattr(self.spec, "zimage_turbo_model_id", "") or ""))
+        self.ed_zimage = QtWidgets.QLineEdit(str(getattr(self.spec, "zimage_model_id", "") or ""))
+        self.ed_sdxl_base = QtWidgets.QLineEdit(str(getattr(self.spec, "sdxl_base_model_id", "") or ""))
+        self.ed_sdxl_turbo = QtWidgets.QLineEdit(str(getattr(self.spec, "sdxl_turbo_model_id", "") or ""))
+        self.ed_sdxl_lora = QtWidgets.QLineEdit(str(getattr(self.spec, "sdxl_lightning_lora_id", "") or ""))
+        self.ed_sdxl_lora_file = QtWidgets.QLineEdit(str(getattr(self.spec, "sdxl_lightning_lora_file", "") or ""))
+        self.ed_flux1 = QtWidgets.QLineEdit(str(getattr(self.spec, "flux1_schnell_model_id", "") or ""))
+
+        ml.addRow("Flux2 bnb4bit model id", self.ed_flux2_bnb4bit)
+        ml.addRow("Flux2 full model id", self.ed_flux2_full)
+        ml.addRow("Z-Image Turbo model id", self.ed_zimage_turbo)
+        ml.addRow("Z-Image model id", self.ed_zimage)
+        ml.addRow("SDXL base model id", self.ed_sdxl_base)
+        ml.addRow("SDXL turbo model id", self.ed_sdxl_turbo)
+        ml.addRow("SDXL Lightning LoRA repo", self.ed_sdxl_lora)
+        ml.addRow("SDXL Lightning LoRA file", self.ed_sdxl_lora_file)
+        ml.addRow("Flux1 schnell model id", self.ed_flux1)
+
+        tabs.addTab(models, "Models")
+
         # ---------------- Buttons ----------------
         btns = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
@@ -192,7 +222,7 @@ class InitImageSettingsDialog(QtWidgets.QDialog):
     def apply_to_cfg(self) -> None:
         s = self.spec
         s.enabled = bool(self.cb_enabled.isChecked())
-        s.preset = str(self.cb_preset.currentData() or "flux2_bnb4bit")
+        s.preset = str(self.cb_preset.currentData() or "zimage_turbo")
         s.policy = str(self.cb_policy.currentData() or "always_refine")
         s.cache_location = str(self.cb_cache_loc.currentData() or "assets")
         s.width = int(self.sp_w.value())
@@ -228,6 +258,16 @@ class InitImageSettingsDialog(QtWidgets.QDialog):
         s.controlnet_model_id = (self.ed_cn_model.text() or "").strip()
         s.controlnet_scale = float(self.sp_cn_scale.value())
         s.refine_strength = float(self.sp_refine.value())
+
+        s.flux2_bnb4bit_model_id = (self.ed_flux2_bnb4bit.text() or "").strip()
+        s.flux2_model_id = (self.ed_flux2_full.text() or "").strip()
+        s.zimage_turbo_model_id = (self.ed_zimage_turbo.text() or "").strip()
+        s.zimage_model_id = (self.ed_zimage.text() or "").strip()
+        s.sdxl_base_model_id = (self.ed_sdxl_base.text() or "").strip()
+        s.sdxl_turbo_model_id = (self.ed_sdxl_turbo.text() or "").strip()
+        s.sdxl_lightning_lora_id = (self.ed_sdxl_lora.text() or "").strip()
+        s.sdxl_lightning_lora_file = (self.ed_sdxl_lora_file.text() or "").strip()
+        s.flux1_schnell_model_id = (self.ed_flux1.text() or "").strip()
 
         self.cfg.init_image = s
 
