@@ -204,18 +204,6 @@ def _upscale_to_target(path: str, target_w: int, target_h: int, log: LogFn = Non
         _log(log, f"[InitFrame] upscale skipped: {e}")
 
 
-def _looks_black_image(path: str, threshold: float = 3.0) -> bool:
-    try:
-        from PIL import Image, ImageStat
-
-        img = Image.open(path).convert("RGB")
-        stat = ImageStat.Stat(img)
-        mean = sum(stat.mean) / max(1.0, len(stat.mean))
-        return mean <= float(threshold)
-    except Exception:
-        return False
-
-
 def _fallback_chain(preset: str) -> List[str]:
     chain = ["zimage_turbo", "sdxl_lightning_4step", "sdxl_base"]
     out = []
