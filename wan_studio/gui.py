@@ -3090,8 +3090,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.le_init_cache_dirname = QtWidgets.QLineEdit(str(getattr(init, 'project_cache_dirname', '.wan_cache') if init else '.wan_cache'))
         self.le_init_cache_dirname.setToolTip("Utilisé uniquement si cache_location=project")
 
-        self.init_w = QtWidgets.QSpinBox(); self.init_w.setRange(256, 4096); self.init_w.setValue(int(getattr(init, 'width', 1024) if init else 1024))
-        self.init_h = QtWidgets.QSpinBox(); self.init_h.setRange(256, 4096); self.init_h.setValue(int(getattr(init, 'height', 1024) if init else 1024))
+        base_w = int((getattr(init, 'width', 0) if init else 0) or getattr(self.cfg, 'width', 1024) or 1024)
+        base_h = int((getattr(init, 'height', 0) if init else 0) or getattr(self.cfg, 'height', 1024) or 1024)
+        self.init_w = QtWidgets.QSpinBox(); self.init_w.setRange(0, 4096); self.init_w.setValue(base_w)
+        self.init_h = QtWidgets.QSpinBox(); self.init_h.setRange(0, 4096); self.init_h.setValue(base_h)
+        self.init_w.setToolTip("0 = utiliser la résolution projet")
+        self.init_h.setToolTip("0 = utiliser la résolution projet")
         row_wh = QtWidgets.QHBoxLayout(); row_wh.addWidget(QtWidgets.QLabel('W')); row_wh.addWidget(self.init_w); row_wh.addWidget(QtWidgets.QLabel('H')); row_wh.addWidget(self.init_h)
         wrow_wh = QtWidgets.QWidget(); wrow_wh.setLayout(row_wh)
 
@@ -3428,7 +3432,12 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Model", "Model ID vide.")
             return
         token = os.environ.get("HUGGINGFACE_HUB_TOKEN") or os.environ.get("HF_TOKEN") or None
-        cache_dir = os.environ.get("HF_HOME") or None
+        try:
+            from .init_frame_subprocess import resolve_hf_cache_dir
+            cache_dir = resolve_hf_cache_dir(self.cfg)
+        except Exception:
+            cache_dir = os.environ.get("HF_HOME") or None
+        repo_id = self._normalize_hf_repo_id(repo_id)
 
         self.model_dl_prog.setRange(0, 0)  # busy
         self.model_dl_status.setText(f"Downloading: {repo_id} …")
@@ -3441,7 +3450,12 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Model", "Model ID vide.")
             return
         token = os.environ.get("HUGGINGFACE_HUB_TOKEN") or os.environ.get("HF_TOKEN") or None
-        cache_dir = os.environ.get("HF_HOME") or None
+        try:
+            from .init_frame_subprocess import resolve_hf_cache_dir
+            cache_dir = resolve_hf_cache_dir(self.cfg)
+        except Exception:
+            cache_dir = os.environ.get("HF_HOME") or None
+        repo_id = self._normalize_hf_repo_id(repo_id)
         try:
             from huggingface_hub import snapshot_download
             local_dir = snapshot_download(
@@ -3491,6 +3505,24 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_model_download_thread_finished(self):
         self.dl_worker = None
         self.dl_thread = None
+
+    def _normalize_hf_repo_id(self, repo_id: str) -> str:
+        """Allow HuggingFace URLs; keep repo_id as org/name."""
+        rid = (repo_id or "").strip()
+        if rid.startswith("http://") or rid.startswith("https://"):
+            try:
+                from urllib.parse import urlparse
+                parts = urlparse(rid)
+                path = (parts.path or "").strip("/")
+                if path:
+                    rid = path
+            except Exception:
+                pass
+        # Trim trailing '/tree/main' or '/resolve/...'
+        for token in ("/tree/", "/resolve/"):
+            if token in rid:
+                rid = rid.split(token, 1)[0].strip("/")
+        return rid
 
     def _build_lora_tab(self):
         container = self._scrollify_tab(self.tab_lora)
@@ -4179,10 +4211,23 @@ class MainWindow(QtWidgets.QMainWindow):
                     init.cache_location = str(self.cb_init_cache_loc.currentData() or self.cb_init_cache_loc.currentText()).strip() or 'assets'
                 if hasattr(self, 'le_init_cache_dirname'):
                     init.project_cache_dirname = self.le_init_cache_dirname.text().strip() or getattr(init, 'project_cache_dirname', '.wan_cache')
-                if hasattr(self, 'init_w'):
-                    init.width = int(self.init_w.value())
-                if hasattr(self, 'init_h'):
-                    init.height = int(self.init_h.value())
+                if hasattr(self, 'init_w') or hasattr(self, 'init_h'):
+                    try:
+                        from .init_frame_subprocess import clamp_to_multiple_of_8
+                        w_raw = int(self.init_w.value()) if hasattr(self, 'init_w') else int(getattr(init, 'width', 0) or 0)
+                        h_raw = int(self.init_h.value()) if hasattr(self, 'init_h') else int(getattr(init, 'height', 0) or 0)
+                        if w_raw == 0 or h_raw == 0:
+                            init.width = 0
+                            init.height = 0
+                        else:
+                            w_clamp, h_clamp = clamp_to_multiple_of_8(w_raw, h_raw)
+                            init.width = int(w_clamp)
+                            init.height = int(h_clamp)
+                    except Exception:
+                        if hasattr(self, 'init_w'):
+                            init.width = int(self.init_w.value())
+                        if hasattr(self, 'init_h'):
+                            init.height = int(self.init_h.value())
                 if hasattr(self, 'init_steps'):
                     init.steps = int(self.init_steps.value())
                 if hasattr(self, 'init_gs'):

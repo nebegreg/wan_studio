@@ -7,6 +7,7 @@ from typing import Optional, Dict
 from PySide6 import QtWidgets, QtCore
 
 from .init_frame_subprocess import build_job, run_init_frame_job, resolve_hf_cache_dir, clamp_to_multiple_of_8
+from .media import unique_path
 
 
 # -----------------------------------------------------------------------------
@@ -183,7 +184,7 @@ class _GenWorker(QtCore.QObject):
     def run(self):
         try:
             w, h = clamp_to_multiple_of_8(self.width, self.height)
-            out_path = os.path.join(self.out_dir, "init_dialog.png")
+            out_path = unique_path(self.out_dir, "init_dialog", "png")
             job = build_job(
                 preset=self.preset,
                 prompt=self.prompt,

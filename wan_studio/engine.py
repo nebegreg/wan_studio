@@ -1706,7 +1706,13 @@ class WanEngine:
         is_cancelled: Optional[Callable[[], bool]],
     ) -> List[np.ndarray]:
         pipe = self.pipe
-        assert pipe is not None
+        if pipe is None:
+            # Recover from unexpected unloads before rendering a segment.
+            self._log(log, "[SAFE] Pipeline missing at segment start -> reloading.")
+            self._load_pipeline(cfg, log)
+            pipe = self.pipe
+        if pipe is None:
+            raise RuntimeError("Pipeline not initialized (backend load failed).")
 
         backend = (getattr(cfg, "backend", None) or getattr(self, "backend", None) or "wan")
         if backend == 'lingbot':
@@ -2406,6 +2412,8 @@ class WanEngine:
             try:
                 init_cfg = getattr(cfg, 'init_image', None)
                 need_anchor = (str(getattr(eff_cfg, 'mode', '')).upper() == 'I2V') and (conditioning_image is None) and (not scene.input_image_path_override)
+                if need_anchor and (not init_cfg or not getattr(init_cfg, 'enabled', False)):
+                    raise RuntimeError("I2V sans image d’ancrage: active Auto Init-Frame ou définis une image input.")
                 if init_cfg and getattr(init_cfg, 'enabled', False) and need_anchor:
                     from .flux2_init import generate_init_image_for_scene
                     loc_name = (getattr(scene, 'location', '') or '').strip()

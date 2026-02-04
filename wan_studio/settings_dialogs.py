@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .config import InitImageSpec, ProjectConfig
+from .init_frame_subprocess import clamp_to_multiple_of_8
 from .cache_utils import clear_dir, dir_size_bytes, prune_to_quota
 
 
@@ -72,8 +73,12 @@ class InitImageSettingsDialog(QtWidgets.QDialog):
         self.cb_cache_loc.addItem("project cache (.wan_cache/init_frames)", "project")
         self._set_combo_data(self.cb_cache_loc, str(getattr(self.spec, "cache_location", "assets") or "assets"))
 
-        self.sp_w = QtWidgets.QSpinBox(); self.sp_w.setRange(128, 4096); self.sp_w.setValue(int(getattr(self.spec, "width", 1024) or 1024))
-        self.sp_h = QtWidgets.QSpinBox(); self.sp_h.setRange(128, 4096); self.sp_h.setValue(int(getattr(self.spec, "height", 1024) or 1024))
+        base_w = int(getattr(self.spec, "width", 0) or getattr(cfg, "width", 1024) or 1024)
+        base_h = int(getattr(self.spec, "height", 0) or getattr(cfg, "height", 1024) or 1024)
+        self.sp_w = QtWidgets.QSpinBox(); self.sp_w.setRange(0, 4096); self.sp_w.setValue(base_w)
+        self.sp_h = QtWidgets.QSpinBox(); self.sp_h.setRange(0, 4096); self.sp_h.setValue(base_h)
+        self.sp_w.setToolTip("0 = utiliser la résolution projet")
+        self.sp_h.setToolTip("0 = utiliser la résolution projet")
         self.sp_steps = QtWidgets.QSpinBox(); self.sp_steps.setRange(1, 200); self.sp_steps.setValue(int(getattr(self.spec, "steps", 28) or 28))
         self.sp_gs = QtWidgets.QDoubleSpinBox(); self.sp_gs.setRange(0.0, 30.0); self.sp_gs.setDecimals(2); self.sp_gs.setSingleStep(0.1)
         self.sp_gs.setValue(float(getattr(self.spec, "guidance_scale", 4.0) or 4.0))
@@ -225,8 +230,15 @@ class InitImageSettingsDialog(QtWidgets.QDialog):
         s.preset = str(self.cb_preset.currentData() or "zimage_turbo")
         s.policy = str(self.cb_policy.currentData() or "always_refine")
         s.cache_location = str(self.cb_cache_loc.currentData() or "assets")
-        s.width = int(self.sp_w.value())
-        s.height = int(self.sp_h.value())
+        w_raw = int(self.sp_w.value())
+        h_raw = int(self.sp_h.value())
+        if w_raw == 0 or h_raw == 0:
+            s.width = 0
+            s.height = 0
+        else:
+            w_clamp, h_clamp = clamp_to_multiple_of_8(w_raw, h_raw)
+            s.width = int(w_clamp)
+            s.height = int(h_clamp)
         s.steps = int(self.sp_steps.value())
         s.guidance_scale = float(self.sp_gs.value())
 
