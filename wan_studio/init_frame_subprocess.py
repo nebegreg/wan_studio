@@ -204,6 +204,18 @@ def _upscale_to_target(path: str, target_w: int, target_h: int, log: LogFn = Non
         _log(log, f"[InitFrame] upscale skipped: {e}")
 
 
+def _looks_black_image(path: str, threshold: float = 3.0) -> bool:
+    try:
+        from PIL import Image, ImageStat
+
+        img = Image.open(path).convert("RGB")
+        stat = ImageStat.Stat(img)
+        mean = sum(stat.mean) / max(1.0, len(stat.mean))
+        return mean <= float(threshold)
+    except Exception:
+        return False
+
+
 def _fallback_chain(preset: str) -> List[str]:
     chain = ["zimage_turbo", "sdxl_lightning_4step", "sdxl_base"]
     out = []
@@ -241,11 +253,14 @@ def run_init_frame_job(
         _log(log, f"[InitFrame] subprocess preset={p} {job['width']}x{job['height']} steps={job.get('steps')}")
         result = _call_worker(job)
         if result.ok and result.path:
-            if (base_w, base_h) != (target_w, target_h):
-                _upscale_to_target(result.path, target_w, target_h, log=log)
-                result.width = target_w
-                result.height = target_h
-            return result
+            if _looks_black_image(result.path):
+                _log(log, f"[InitFrame] black image detected for preset={p}; trying fallback.")
+            else:
+                if (base_w, base_h) != (target_w, target_h):
+                    _upscale_to_target(result.path, target_w, target_h, log=log)
+                    result.width = target_w
+                    result.height = target_h
+                return result
 
         if result.error_type == "oom":
             for i in range(downscale_retries):
@@ -257,6 +272,9 @@ def run_init_frame_job(
                 _log(log, f"[InitFrame] OOM retry {i+1}/{downscale_retries}: {base_w}x{base_h} → {nw}x{nh}")
                 retry = _call_worker(job)
                 if retry.ok and retry.path:
+                    if _looks_black_image(retry.path):
+                        _log(log, f"[InitFrame] black image detected after OOM retry for preset={p}; trying fallback.")
+                        break
                     if (nw, nh) != (target_w, target_h):
                         _upscale_to_target(retry.path, target_w, target_h, log=log)
                         retry.width = target_w
